@@ -59,8 +59,66 @@ func main() {
 
 	router := gin.Default()
 	router.GET("/import/:page", Import)
-	router.GET("card/:info", Info)
+	router.GET("/card/:info", Info)
+	router.GET("/list", Search)
 	router.Run("localhost:9000")
+}
+func Search(c *gin.Context) {
+	var id string
+	var name string
+	var colors string
+	var cmc int
+	var tip string
+	var types string
+	var supertypes string
+	var subtypes string
+	var rarity string
+	var imageUrl string
+	var originalText string
+	var ret Karta
+
+	var conditions struct {
+		Condition []string
+		Value     []interface{}
+	}
+	paramPairs := c.Request.URL.Query()
+
+	for k, v := range paramPairs {
+		conditions.Condition = append(conditions.Condition, k)
+		conditions.Value = append(conditions.Value, v[0])
+	}
+	if len(conditions.Condition) != len(conditions.Value) {
+		c.String(404, "wrong params")
+		return
+	}
+	switch len(conditions.Condition) {
+	case 1:
+		stri := fmt.Sprintf(`SELECT * FROM "mtg" WHERE "%s"=$1`, conditions.Condition[0])
+		//rows, _ := db.Query(`SELECT * FROM "mtg" WHERE col = "$1"  =$2`, conditions.Condition, conditions.Value[0])
+		rows, _ := db.Query(stri, conditions.Value[0])
+		for rows.Next() {
+			_ = rows.Scan(&id, &name, &colors, &cmc, &tip, &types, &supertypes, &subtypes, &rarity, &imageUrl, &originalText)
+			ret.Id = id
+			ret.Name = name
+			ret.Colors = append(ret.Colors, colors)
+			ret.Cmc = float64(cmc)
+			ret.Type = tip
+			ret.Types = append(ret.Types, types)
+			ret.Supertypes = append(ret.Supertypes, supertypes)
+			ret.Subtypes = append(ret.Subtypes, subtypes)
+			ret.Rarity = rarity
+			ret.ImageUrl = imageUrl
+			ret.OriginalText = originalText
+			retur, _ := json.MarshalIndent(ret, "", "")
+			c.String(200, string(retur))
+			ret.Types = ret.Types[:0]
+			ret.Colors = ret.Types[:0]
+			ret.Supertypes = ret.Types[:0]
+			ret.Subtypes = ret.Types[:0]
+		}
+
+	}
+
 }
 
 func Import(c *gin.Context) {
