@@ -69,18 +69,19 @@ func main() {
 	router.Run("localhost:9001")
 }
 func CreateTable() {
-	db.Exec("CREATE TABLE $1", "mtg")
-	db.Exec(`ALTER TABLE "mtg" ADD Id text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Name text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Colors text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Cmc integer`)
-	db.Exec(`ALTER TABLE "mtg" ADD Type text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Types text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Supertypes text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Subtypes text`)
-	db.Exec(`ALTER TABLE "mtg" ADD Rarity text`)
-	db.Exec(`ALTER TABLE "mtg" ADD ImageUrl text`)
-	db.Exec(`ALTER TABLE "mtg" ADD OriginalText text`)
+	_, err := db.Exec(`CREATE TABLE mtg (Id text,
+										 Name text,
+										 Colors text,
+										 Cmc integer,
+										 Type text,
+										 Types text,
+										 Supertypes text,
+										 Subtypes text,
+										 Rarity text,
+										 ImageUrl text,
+										 OriginalText text
+									    )`)
+	fmt.Println("%w", err)
 }
 
 func getData(c *gin.Context, rows *sql.Rows, total int, pageNumber int) {
@@ -88,15 +89,15 @@ func getData(c *gin.Context, rows *sql.Rows, total int, pageNumber int) {
 	var name string
 
 	type Cards struct {
-		Id   string `json:"Id"`
-		Name string `json:"Name"`
+		Id   string `json:"id"`
+		Name string `json:"name"`
 	}
 
 	type ret struct {
-		Total     int     `json:"Total:"`
-		Page      int     `json:"Page:"`
-		Items     int     `json:"Items"`
-		CardSlice []Cards `json:"Cards:"`
+		Total     int       `json:"total:"`
+		Page      int       `json:"page:"`
+		Items     int       `json:"items"`
+		CardSlice [10]Cards `json:"cards:"`
 	}
 	var retAll ret
 
@@ -109,6 +110,7 @@ func getData(c *gin.Context, rows *sql.Rows, total int, pageNumber int) {
 		}
 		retAll.CardSlice[counter].Id = id
 		retAll.CardSlice[counter].Name = name
+		counter++
 	}
 	retAll.Total = total
 	retAll.Page = pageNumber
@@ -132,25 +134,26 @@ func Search(c *gin.Context) {
 	}
 	if len(conditions.Condition) == 1 && conditions.Condition[0] == "page" {
 		pageNumber := conditions.Value[0]
-		pageNum := pageNumber.(int)
-		pgNum := (pageNum - 1) * 10
-		rows, err := db.Query(`SELECT "Id", "Name" FROM "mtg" LIMIT 10 OFFSET $1`, pgNum)
+		toStr := pageNumber.(string)
+		toInt, _ := strconv.Atoi(toStr)
+		pgNum := (toInt - 1) * 10
+		rows, err := db.Query(`SELECT "id", "name" FROM "mtg" LIMIT 10 OFFSET $1`, pgNum)
 		if err != nil {
 			c.String(404, "Please check if params are correct")
 			return
 		}
 		defer rows.Close()
-		getData(c, rows, 0, pageNum)
+		getData(c, rows, 0, toInt)
 		return
-
 	}
 	pageNumber := conditions.Value[len(conditions.Value)-1]
-	pageNum := pageNumber.(int)
-	pgNum := (pageNum - 1) * 10
+	toStr := pageNumber.(string)
+	toInt, _ := strconv.Atoi(toStr)
+	pgNum := (toInt - 1) * 10
 
 	conditions.Condition = conditions.Condition[:len(conditions.Condition)-1]
 	conditions.Value = conditions.Value[:len(conditions.Value)-1]
-	query := fmt.Sprintf(`SELECT "Id", "Name" FROM "mtg" WHERE "%s"=$1`, conditions.Condition[0])
+	query := fmt.Sprintf(`SELECT "id", "name" FROM "mtg" WHERE "%s"=$1`, conditions.Condition[0])
 	for i := range conditions.Condition {
 		if i == 0 {
 			continue
@@ -165,7 +168,7 @@ func Search(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	getData(c, rows, 0, pageNum)
+	getData(c, rows, 0, toInt)
 
 }
 
@@ -181,6 +184,11 @@ func Import(c *gin.Context) {
 		return
 	}
 	json.NewDecoder(response.Body).Decode(&cards)
+	if len(cards.CardSlice) < 1 {
+		c.String(400, "Page is empty")
+		return
+	}
+
 	for i := 0; i < len(cards.CardSlice); i++ {
 		var1 := cards.CardSlice[i].Id
 		var2 := cards.CardSlice[i].Name
@@ -201,9 +209,10 @@ func Import(c *gin.Context) {
 		var9 := cards.CardSlice[i].Rarity
 		var10 := cards.CardSlice[i].ImageUrl
 		var11 := cards.CardSlice[i].OriginalText
-		if _, err := db.Query("insert into mtg values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)", var1, var2, var3, var4, var5, var6, var7, var8, var9, var10, var11); err != nil {
+		if _, err := db.Exec("insert into mtg values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)", var1, var2, var3, var4, var5, var6, var7, var8, var9, var10, var11); err != nil {
 			c.String(404, "Not found")
 			return
+			//fmt.Println("%w", err)
 		}
 		var3 = ""
 		var6 = ""
@@ -214,37 +223,23 @@ func Import(c *gin.Context) {
 }
 
 func Info(c *gin.Context) {
-	var id string
-	var name string
 	var colors string
-	var cmc float64
-	var tip string
 	var types string
 	var supertypes string
 	var subtypes string
-	var rarity string
-	var imageUrl string
-	var originalText string
-
 	var ret Card
 	info := c.Param("info")
-	row := db.QueryRow(`SELECT * FROM "mtg" WHERE "Id"=$1`, info)
-	err := row.Scan(&id, &name, &imageUrl)
+	row := db.QueryRow(`SELECT * FROM "mtg" WHERE "id"=$1`, info)
+	err := row.Scan(&ret.Id, &ret.Name, &colors, &ret.Cmc, &ret.Type, &types, &supertypes, &subtypes, &ret.Rarity, &ret.ImageUrl, &ret.OriginalText)
 	if err != nil {
+		fmt.Println(err)
 		c.String(404, "Card is not in database or id does not exist")
 		return
 	}
-	ret.Id = id
-	ret.Name = name
-	ret.Colors[0] = colors
-	ret.Cmc = cmc
-	ret.Type = tip
-	ret.Types[0] = types
-	ret.Supertypes[0] = supertypes
-	ret.Subtypes[0] = subtypes
-	ret.Rarity = rarity
-	ret.ImageUrl = imageUrl
-	ret.OriginalText = originalText
+	ret.Colors = append(ret.Colors, colors)
+	ret.Types = append(ret.Types, types)
+	ret.Supertypes = append(ret.Supertypes, supertypes)
+	ret.Subtypes = append(ret.Subtypes, subtypes)
 	retur, err := json.MarshalIndent(ret, "", "")
 	if err != nil {
 		c.String(404, "Not found")
