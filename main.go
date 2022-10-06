@@ -57,102 +57,68 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
+	_, err = db.Query(`SELECT * FROM "mtg"`)
+	if err != nil {
+		CreateTable()
+	}
 
 	router := gin.Default()
 	router.GET("/import/:page", Import)
 	router.GET("/card/:info", Info)
-	router.GET("list/all", List)
 	router.GET("/list", Search)
 	router.Run("localhost:9001")
 }
-func List(c *gin.Context) {
-	var id string
-	var name string
-	var colors string
-	var cmc int
-	var tip string
-	var types string
-	var supertypes string
-	var subtypes string
-	var rarity string
-	var imageUrl string
-	var originalText string
-	var ret Card
-	var counter int
-
-	rows, err := db.Query(`SELECT * FROM "mtg"`)
-	if err != nil {
-		c.String(404, "Please check if url is correct")
-		return
-	}
-	for rows.Next() {
-		counter++
-		if counter%10 == 1 {
-			retString := ("\n" + "page" + strconv.Itoa(counter/10+1) + "\n" + "Items:10" + "\n")
-			c.String(200, retString)
-		}
-		err = rows.Scan(&id, &name, &colors, &cmc, &tip, &types, &supertypes, &subtypes, &rarity, &imageUrl, &originalText)
-		if err != nil {
-			c.String(404, "Error")
-			return
-		}
-		ret.Id = id
-		ret.Name = name
-		ret.Colors = append(ret.Colors, colors)
-		ret.Cmc = float64(cmc)
-		ret.Type = tip
-		ret.Types = append(ret.Types, types)
-		ret.Supertypes = append(ret.Supertypes, supertypes)
-		ret.Subtypes = append(ret.Subtypes, subtypes)
-		ret.Rarity = rarity
-		ret.ImageUrl = imageUrl
-		ret.OriginalText = originalText
-		retur, err := json.MarshalIndent(ret, "", "")
-		if err != nil {
-			c.String(404, "Error")
-			return
-		}
-		c.String(200, string(retur))
-		ret.Types = ret.Types[:0]
-		ret.Colors = ret.Types[:0]
-		ret.Supertypes = ret.Types[:0]
-		ret.Subtypes = ret.Types[:0]
-	}
-	TotalString := ("\n" + "Total cards:" + strconv.Itoa(counter))
-	c.String(200, TotalString)
+func CreateTable() {
+	db.Exec("CREATE TABLE $1", "mtg")
+	db.Exec(`ALTER TABLE "mtg" ADD Id text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Name text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Colors text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Cmc integer`)
+	db.Exec(`ALTER TABLE "mtg" ADD Type text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Types text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Supertypes text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Subtypes text`)
+	db.Exec(`ALTER TABLE "mtg" ADD Rarity text`)
+	db.Exec(`ALTER TABLE "mtg" ADD ImageUrl text`)
+	db.Exec(`ALTER TABLE "mtg" ADD OriginalText text`)
 }
 
-func getData(c *gin.Context, rows *sql.Rows) int {
+func getData(c *gin.Context, rows *sql.Rows, total int, pageNumber int) {
 	var id string
 	var name string
 
-	var ret struct {
-		Id   string
-		Name string
+	type Cards struct {
+		Id   string `json:"Id"`
+		Name string `json:"Name"`
 	}
+
+	type ret struct {
+		Total     int     `json:"Total:"`
+		Page      int     `json:"Page:"`
+		Items     int     `json:"Items"`
+		CardSlice []Cards `json:"Cards:"`
+	}
+	var retAll ret
+
 	var counter int
 	for rows.Next() {
-		counter++
-		if counter%10 == 1 {
-			retString := ("\n" + "page" + strconv.Itoa(counter/10+1) + "\n" + "Items:10" + "\n")
-			c.String(200, retString)
-		}
 		err := rows.Scan(&id, &name)
 		if err != nil {
 			c.String(404, "Error")
-			return 0
+			return
 		}
-		ret.Id = id
-		ret.Name = name
-		retur, _ := json.MarshalIndent(ret, "", "")
-		c.String(200, string(retur))
+		retAll.CardSlice[counter].Id = id
+		retAll.CardSlice[counter].Name = name
 	}
-	return counter
+	retAll.Total = total
+	retAll.Page = pageNumber
+	retAll.Items = counter
+	retur, _ := json.MarshalIndent(retAll, "", "")
+	c.String(200, string(retur))
+
 }
 
 func Search(c *gin.Context) {
-
-	var counter int
 
 	var conditions struct {
 		Condition []string
@@ -164,10 +130,26 @@ func Search(c *gin.Context) {
 		conditions.Condition = append(conditions.Condition, k)
 		conditions.Value = append(conditions.Value, v[0])
 	}
-	if len(conditions.Condition) == 0 {
-		c.String(400, "There is no valid params")
-	}
+	if len(conditions.Condition) == 1 && conditions.Condition[0] == "page" {
+		pageNumber := conditions.Value[0]
+		pageNum := pageNumber.(int)
+		pgNum := (pageNum - 1) * 10
+		rows, err := db.Query(`SELECT "Id", "Name" FROM "mtg" LIMIT 10 OFFSET $1`, pgNum)
+		if err != nil {
+			c.String(404, "Please check if params are correct")
+			return
+		}
+		defer rows.Close()
+		getData(c, rows, 0, pageNum)
+		return
 
+	}
+	pageNumber := conditions.Value[len(conditions.Value)-1]
+	pageNum := pageNumber.(int)
+	pgNum := (pageNum - 1) * 10
+
+	conditions.Condition = conditions.Condition[:len(conditions.Condition)-1]
+	conditions.Value = conditions.Value[:len(conditions.Value)-1]
 	query := fmt.Sprintf(`SELECT "Id", "Name" FROM "mtg" WHERE "%s"=$1`, conditions.Condition[0])
 	for i := range conditions.Condition {
 		if i == 0 {
@@ -175,6 +157,7 @@ func Search(c *gin.Context) {
 		}
 		query = fmt.Sprintf(`%s AND "%s"=$%d`, query, conditions.Condition[i], i+1)
 	}
+	query = fmt.Sprintf(`%s LIMIT 10 OFFSET %s`, query, strconv.Itoa(pgNum))
 	rows, err := db.Query(query, conditions.Value...)
 	if err != nil {
 		c.String(404, "Please check if params are correct")
@@ -182,9 +165,7 @@ func Search(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	counter = getData(c, rows)
-	TotalString := ("\n" + "Total cards:" + strconv.Itoa(counter))
-	c.String(200, TotalString)
+	getData(c, rows, 0, pageNum)
 
 }
 
@@ -235,7 +216,15 @@ func Import(c *gin.Context) {
 func Info(c *gin.Context) {
 	var id string
 	var name string
+	var colors string
+	var cmc float64
+	var tip string
+	var types string
+	var supertypes string
+	var subtypes string
+	var rarity string
 	var imageUrl string
+	var originalText string
 
 	var ret Card
 	info := c.Param("info")
@@ -247,7 +236,15 @@ func Info(c *gin.Context) {
 	}
 	ret.Id = id
 	ret.Name = name
+	ret.Colors[0] = colors
+	ret.Cmc = cmc
+	ret.Type = tip
+	ret.Types[0] = types
+	ret.Supertypes[0] = supertypes
+	ret.Subtypes[0] = subtypes
+	ret.Rarity = rarity
 	ret.ImageUrl = imageUrl
+	ret.OriginalText = originalText
 	retur, err := json.MarshalIndent(ret, "", "")
 	if err != nil {
 		c.String(404, "Not found")
